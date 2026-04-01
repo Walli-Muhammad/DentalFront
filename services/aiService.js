@@ -1,8 +1,8 @@
 /**
- * services/aiService.js — OpenAI GPT-4o-mini integration layer
+ * services/aiService.js — DeepInfra (OpenAI-compatible) integration layer
  *
  * generateResponse() takes the current user message and the conversation
- * history, calls GPT-4o-mini with a strict system prompt, and returns:
+ * history, calls the DeepInfra-hosted model with a strict system prompt, and returns:
  *   { text, appointmentData }
  *
  * When the AI has collected Name + Dental Problem + Preferred Time it embeds
@@ -13,15 +13,16 @@
  * sheetsService.addAppointment().
  *
  * Required environment variable:
- *   OPENAI_API_KEY — standard OpenAI secret key
+ *   DEEPINFRA_API_KEY — DeepInfra secret key
  */
 
 import OpenAI from 'openai';
 
-// ── OpenAI client (singleton) ─────────────────────────────────────────────────
+// ── DeepInfra client (singleton, OpenAI-compatible) ──────────────────────────
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey:  process.env.DEEPINFRA_API_KEY,
+  baseURL: 'https://api.deepinfra.com/v1/openai',
 });
 
 // ── System prompt ─────────────────────────────────────────────────────────────
@@ -178,7 +179,7 @@ export async function generateResponse(userMessage, history = []) {
 
   try {
     const completion = await openai.chat.completions.create({
-      model:       'gpt-4o-mini',
+      model:       'openai/gpt-oss-120b-Turbo',
       messages,
       temperature: 0.4,   // Low temp keeps the receptionist focused & consistent
       max_tokens:  512,   // Sufficient for a natural reply; prevents runaway output
