@@ -10,7 +10,7 @@
  *   %%APPOINTMENT%%{"name":"...","dentalProblem":"...","preferredTime":"..."}%%END%%
  *
  * The caller reads `appointmentData` (non-null) as the trigger to call
- * sheetsService.addAppointment().
+ * supabaseService.saveAppointment().
  *
  * Required environment variable:
  *   DEEPINFRA_API_KEY — DeepInfra secret key

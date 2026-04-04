@@ -7,16 +7,17 @@
  *
  * Flow for inbound text messages:
  *   1. Acknowledge with 200 OK immediately (prevents Meta retries)
- *   2. Check Asia/Karachi working hours
+ *   2. Upsert patient + log inbound message to Supabase
+ *   3. Check Asia/Karachi working hours
  *      • Out-of-hours → send static template, skip AI (saves cost)
  *      • In-hours     → call generateResponse() with conversation history
- *   3. If AI returns appointmentData → persist to Google Sheets
- *   4. Send AI text response back to user via sendWhatsAppMessage()
+ *   4. If AI returns appointmentData → insert into Supabase appointments table
+ *   5. Log outbound reply to Supabase, then send via WhatsApp Cloud API
  */
 
 import axios from 'axios';
-import { generateResponse }       from '../services/aiService.js';
-import { addAppointment }         from '../services/sheetsService.js';
+import { generateResponse }                        from '../services/aiService.js';
+import { upsertPatient, logMessage, saveAppointment } from '../services/supabaseService.js';
 import { isWithinWorkingHours, getOutOfHoursMessage } from '../utils/timeUtils.js';
 
 // ── WhatsApp Cloud API config ─────────────────────────────────────────────────
@@ -241,6 +242,15 @@ async function handleMessage({ message, contact }) {
   const userMessageText = message.text?.body?.trim();
   if (!userMessageText) return;
 
+  // ── Supabase: upsert patient + log inbound message ────────────────────────
+  // Fire-and-forget individually so a DB hiccup never blocks the AI reply
+  upsertPatient(senderPhone, senderName).catch((err) =>
+    console.error('[Pipeline] ❌ upsertPatient failed:', err.message)
+  );
+  logMessage(senderPhone, 'inbound', userMessageText).catch((err) =>
+    console.error('[Pipeline] ❌ logMessage (inbound) failed:', err.message)
+  );
+
   // ── Working hours gate ────────────────────────────────────────────────────
   if (!isWithinWorkingHours()) {
     console.log(`[Pipeline] 🕐 Out of hours — skipping AI for ${senderPhone}`);
@@ -265,16 +275,19 @@ async function handleMessage({ message, contact }) {
     // ── Persist appointment if AI collected all required data ──────────────
     if (appointmentData) {
       try {
-        await addAppointment(appointmentData);
-        console.log(`[Pipeline] 📋 Appointment saved for ${senderPhone}`);
-      } catch (sheetErr) {
-        // Don't block the WhatsApp reply if Sheets fails
-        console.error('[Pipeline] ❌ Sheets write failed:', sheetErr.message);
+        await saveAppointment(senderPhone, appointmentData);
+        console.log(`[Pipeline] 📋 Appointment saved to Supabase for ${senderPhone}`);
+      } catch (dbErr) {
+        // Don't block the WhatsApp reply if the DB write fails
+        console.error('[Pipeline] ❌ Supabase appointment write failed:', dbErr.message);
       }
     }
 
-    // ── Save assistant reply to history & send to user ─────────────────────
+    // ── Log outbound reply, save to history, and send to user ─────────────
     saveAssistantReply(senderPhone, aiReply);
+    logMessage(senderPhone, 'outbound', aiReply).catch((err) =>
+      console.error('[Pipeline] ❌ logMessage (outbound) failed:', err.message)
+    );
     await sendWhatsAppMessage(senderPhone, aiReply);
 
   } catch (err) {
