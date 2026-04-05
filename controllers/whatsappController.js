@@ -16,14 +16,14 @@
  */
 
 import axios from 'axios';
-import { generateResponse }                        from '../services/aiService.js';
+import { generateResponse } from '../services/aiService.js';
 import { upsertPatient, logMessage, saveAppointment } from '../services/supabaseService.js';
 import { isWithinWorkingHours, getOutOfHoursMessage } from '../utils/timeUtils.js';
 
 // ── WhatsApp Cloud API config ─────────────────────────────────────────────────
 
 const WA_API_VERSION = 'v17.0';
-const WA_BASE_URL    = `https://graph.facebook.com/${WA_API_VERSION}`;
+const WA_BASE_URL = `https://graph.facebook.com/${WA_API_VERSION}`;
 
 /**
  * Sends a plain-text message to a WhatsApp number via the Meta Cloud API.
@@ -33,8 +33,8 @@ const WA_BASE_URL    = `https://graph.facebook.com/${WA_API_VERSION}`;
  * @returns {Promise<void>}
  */
 async function sendWhatsAppMessage(to, messageText) {
-  const phoneNumberId   = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  const accessToken     = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
 
   if (!phoneNumberId || !accessToken) {
     throw new Error(
@@ -42,10 +42,10 @@ async function sendWhatsAppMessage(to, messageText) {
     );
   }
 
-  const url     = `${WA_BASE_URL}/${phoneNumberId}/messages`;
+  const url = `${WA_BASE_URL}/${phoneNumberId}/messages`;
   const payload = {
     messaging_product: 'whatsapp',
-    recipient_type:    'individual',
+    recipient_type: 'individual',
     to,
     type: 'text',
     text: { body: messageText },
@@ -64,7 +64,7 @@ async function sendWhatsAppMessage(to, messageText) {
       messageId: response.data?.messages?.[0]?.id,
     });
   } catch (err) {
-    const status  = err.response?.status;
+    const status = err.response?.status;
     const details = err.response?.data?.error ?? err.message;
     console.error('[WhatsApp Send] ❌ Failed to send message', { to, status, details });
     throw new Error(`WhatsApp send failed (${status}): ${JSON.stringify(details)}`);
@@ -121,8 +121,8 @@ function saveAssistantReply(senderId, assistantReply) {
  *   hub.challenge    — echo this back to confirm ownership
  */
 export const verifyWebhook = (req, res) => {
-  const mode      = req.query['hub.mode'];
-  const token     = req.query['hub.verify_token'];
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
   console.log('[Webhook Verify] Received verification request', { mode, token });
@@ -194,10 +194,10 @@ async function processChange(change) {
   if (Array.isArray(value.statuses) && value.statuses.length > 0) {
     for (const status of value.statuses) {
       console.log('[Status Update]', {
-        messageId:   status.id,
-        status:      status.status,
+        messageId: status.id,
+        status: status.status,
         recipientId: status.recipient_id,
-        timestamp:   new Date(Number(status.timestamp) * 1000).toISOString(),
+        timestamp: new Date(Number(status.timestamp) * 1000).toISOString(),
       });
     }
     return;
@@ -210,7 +210,7 @@ async function processChange(change) {
   }
 
   const metadata = value.metadata ?? {};
-  const contact  = value.contacts?.[0] ?? {};
+  const contact = value.contacts?.[0] ?? {};
 
   for (const message of value.messages) {
     logIncomingMessage({ message, metadata, contact });
@@ -228,7 +228,7 @@ async function processChange(change) {
  */
 async function handleMessage({ message, contact }) {
   const senderPhone = message.from; // e.g. "923001234567"
-  const senderName  = contact?.profile?.name ?? 'Patient';
+  const senderName = contact?.profile?.name ?? 'Patient';
 
   // Only handle text messages for now; other types get a nudge
   if (message.type !== 'text') {
@@ -242,22 +242,24 @@ async function handleMessage({ message, contact }) {
   const userMessageText = message.text?.body?.trim();
   if (!userMessageText) return;
 
-  // ── Supabase: upsert patient + log inbound message ────────────────────────
-  // Fire-and-forget individually so a DB hiccup never blocks the AI reply
-  upsertPatient(senderPhone, senderName).catch((err) =>
-    console.error('[Pipeline] ❌ upsertPatient failed:', err.message)
-  );
-  logMessage(senderPhone, 'inbound', userMessageText).catch((err) =>
-    console.error('[Pipeline] ❌ logMessage (inbound) failed:', err.message)
-  );
+  // ── Supabase: upsert patient, THEN log inbound message ───────────────────
+  // Sequential await ensures the patients row exists before the FK-constrained
+  // messages insert runs, eliminating the foreign key violation race condition.
+  try {
+    await upsertPatient(senderPhone, senderName);
+    await logMessage(senderPhone, 'inbound', userMessageText);
+  } catch (dbErr) {
+    // A DB failure here is non-fatal — log it and continue with the AI reply
+    console.error('[Pipeline] ❌ Supabase inbound logging failed:', dbErr.message);
+  }
 
   // ── Working hours gate ────────────────────────────────────────────────────
-  if (!isWithinWorkingHours()) {
+  /*if (!isWithinWorkingHours()) {
     console.log(`[Pipeline] 🕐 Out of hours — skipping AI for ${senderPhone}`);
     const outOfHoursReply = getOutOfHoursMessage();
     await sendWhatsAppMessage(senderPhone, outOfHoursReply);
     return;
-  }
+  }*/
 
   // ── AI processing ─────────────────────────────────────────────────────────
   console.log(`[Pipeline] 🤖 Routing to AI for ${senderPhone} (${senderName})`);
@@ -313,12 +315,12 @@ async function handleMessage({ message, contact }) {
  */
 function logIncomingMessage({ message, metadata, contact }) {
   const base = {
-    messageId:   message.id,
-    type:        message.type,
-    from:        message.from,
-    senderName:  contact?.profile?.name ?? 'Unknown',
+    messageId: message.id,
+    type: message.type,
+    from: message.from,
+    senderName: contact?.profile?.name ?? 'Unknown',
     phoneNumber: metadata?.display_phone_number,
-    timestamp:   new Date(Number(message.timestamp) * 1000).toISOString(),
+    timestamp: new Date(Number(message.timestamp) * 1000).toISOString(),
   };
 
   switch (message.type) {
